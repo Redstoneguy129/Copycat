@@ -54,44 +54,23 @@ async function app() {
     id: bigint,
     title: string,
   ): Promise<{ chat_id: ID; topics: string[] }> {
-    let topics: string[] = [];
-    let offset_date = 0;
-    let offset_id = 0;
-    let offset_topic = 0;
-    const limit = 100;
-    let hasMore = true;
-
-    while (hasMore) {
-      const response = await client.invoke({
-        _: "channels.getForumTopics",
-        channel: {
-          _: "inputChannel",
-          channel_id: id,
-          access_hash: access_hash,
-        },
-        offset_date,
-        offset_id,
-        offset_topic,
-        limit,
-      });
-      if (response.topics.length > 0) {
-        //@ts-ignore issue with the library
-        topics.push(...response.topics.map((topic) => topic.title));
-        // Update pagination parameters
-        const lastTopic = response.topics[response.topics.length - 1];
-        //@ts-ignore issue with the library
-        offset_date = lastTopic.date;
-        offset_id = lastTopic.id;
-        //@ts-ignore issue with the library
-        offset_topic = lastTopic.topic_id;
-      } else {
-        hasMore = false;
-      }
-    }
+    const topics = await client.invoke({
+      _: "channels.getForumTopics",
+      channel: {
+        _: "inputChannel",
+        channel_id: id, // Replace with actual channel ID
+        access_hash: access_hash, // Replace with actual access hash
+      },
+      offset_date: 0,
+      offset_id: 0,
+      offset_topic: 0,
+      limit: 100, // Adjust as needed
+    });
     return {
       //@ts-ignore issue with the library
       chat_id: chats.find((chat) => chat.name === title)?.id,
-      topics,
+      //@ts-ignore issue with the library
+      topics: topics.topics.map((topic) => topic.title),
     };
   }
 
