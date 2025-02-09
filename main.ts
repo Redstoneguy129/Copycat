@@ -6,7 +6,7 @@ import "jsr:@std/dotenv/load";
 
 async function app() {
   const trackedChats: string[] = [];
-  let outputChat: ID | null = null;
+  let outputChats: ID[] = [];
 
   const client = new Client({
     storage: undefined,
@@ -54,23 +54,44 @@ async function app() {
     id: bigint,
     title: string,
   ): Promise<{ chat_id: ID; topics: string[] }> {
-    const topics = await client.invoke({
-      _: "channels.getForumTopics",
-      channel: {
-        _: "inputChannel",
-        channel_id: id, // Replace with actual channel ID
-        access_hash: access_hash, // Replace with actual access hash
-      },
-      offset_date: 0,
-      offset_id: 0,
-      offset_topic: 0,
-      limit: 100, // Adjust as needed
-    });
+    let topics: string[] = [];
+    let offset_date = 0;
+    let offset_id = 0;
+    let offset_topic = 0;
+    const limit = 100;
+    let hasMore = true;
+
+    while (hasMore) {
+      const response = await client.invoke({
+        _: "channels.getForumTopics",
+        channel: {
+          _: "inputChannel",
+          channel_id: id,
+          access_hash: access_hash,
+        },
+        offset_date,
+        offset_id,
+        offset_topic,
+        limit,
+      });
+      if (response.topics.length > 0) {
+        //@ts-ignore issue with the library
+        topics.push(...response.topics.map((topic) => topic.title));
+        // Update pagination parameters
+        const lastTopic = response.topics[response.topics.length - 1];
+        //@ts-ignore issue with the library
+        offset_date = lastTopic.date;
+        offset_id = lastTopic.id;
+        //@ts-ignore issue with the library
+        offset_topic = lastTopic.topic_id;
+      } else {
+        hasMore = false;
+      }
+    }
     return {
       //@ts-ignore issue with the library
       chat_id: chats.find((chat) => chat.name === title)?.id,
-      //@ts-ignore issue with the library
-      topics: topics.topics.map((topic) => topic.title),
+      topics,
     };
   }
 
@@ -99,7 +120,9 @@ async function app() {
     message:
       "Pick the channels you want to track. Use space to select. Arrow keys to navigate. Enter to submit.",
     options: [
-      ...nonForumChats.map((chat) => ({ name: chat.name, value: chat.id })),
+      ...nonForumChats.filter((chat) =>
+        !specialChats.find((schat) => schat.includes(chat.id.toString()))
+      ).map((chat) => ({ name: chat.name, value: chat.id })),
       ...specialChats.map((chat) => ({
         name: chat.split("/")[1],
         value: chat,
@@ -110,31 +133,52 @@ async function app() {
   trackedChats.push(...trackTheseChats.map((chat) => chat.toString()));
 
   client.on("message", (ctx: Context) => {
-    if (ctx.from?.id === ctx.me?.id) {
-      //@ts-ignore issue with the library
-      if (ctx.msg?.text === "/copycat") {
-        if (ctx.chat) {
-          outputChat = ctx.chat?.id;
-          client.sendMessage(
-            ctx.chat?.id!,
-            `Output chat set here`,
+    try {
+      if (ctx.from?.id === ctx.me?.id) {
+        //@ts-ignore issue with the library
+        if ((ctx.msg?.text as string).toLowerCase() === "/copycat") {
+          if (ctx.chat) {
+            if (!outputChats.includes(ctx.chat?.id)) {
+              outputChats.push(ctx.chat?.id);
+              client.sendMessage(
+                ctx.chat?.id!,
+                `Output chat set here`,
+              );
+            } else {
+              outputChats = outputChats.filter((chat) => chat !== ctx.chat?.id);
+              client.sendMessage(
+                ctx.chat?.id!,
+                `Output chat removed`,
+              );
+            }
+          }
+        }
+      }
+
+      if (!ctx.msg?.out) {
+        let id: string;
+        if (ctx.msg?.isTopicMessage) {
+          //@ts-ignore issue with the library
+          const topicName = ctx.msg.replyToMessage?.forumTopicCreated.name;
+          id = ctx.chat?.id.toString() + "/" + topicName;
+        } else {
+          id = ctx.chat?.id.toString() + "";
+        }
+        if (trackedChats.includes(id) && outputChats.length !== 0) {
+          outputChats.forEach(async (outputChat) =>
+            await client.forwardMessage(
+              ctx.chat?.id!,
+              outputChat,
+              ctx.msg!.id,
+              {
+                dropSenderName: true,
+              },
+            )
           );
         }
       }
-    }
-
-    if (!ctx.msg?.out) {
-      let id: string;
-      if (ctx.msg?.isTopicMessage) {
-        //@ts-ignore issue with the library
-        const topicName = ctx.msg.replyToMessage?.forumTopicCreated.name;
-        id = ctx.chat?.id.toString() + "/" + topicName;
-      } else {
-        id = ctx.chat?.id.toString() + "";
-      }
-      if (trackedChats.includes(id) && outputChat !== null) {
-        client.forwardMessage(ctx.chat?.id!, outputChat, ctx.msg!.id);
-      }
+    } catch (e) {
+      console.error(e);
     }
   });
 }
